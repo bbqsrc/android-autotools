@@ -1,0 +1,51 @@
+{
+    "cflags": ["-DANDROID", "-fPIE"],
+    "cxxflags": ["-DANDROID", "-FPIE"],
+    "ldflags": ["-fPIE", "-pie"],
+    "archs": {
+        "arm": {
+            "abis": {
+                "armeabi": {
+                    "cflags": ["-march=armv5te"],
+                    "cxxflags": ["-march=armv5te"],
+                    "ldflags": ["-mthumb", "-march=armv5te"]
+                },
+                "armeabi-v7a": {
+                    "cflags": ["-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=softfp"],
+                    "cxxflags": ["-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=softfp"],
+                    "ldflags": ["-mthumb", "-march=armv7-a", "-Wl,--fix-cortex-a8"]
+                },
+                "armeabi-v7a-hard": {
+                    "cflags": ["-march=armv7-a", "-mfpu=vfpv3-d16", "-mhard-float", "-D_NDK_MATH_NO_SOFTFP=1"],
+                    "cxxflags":  ["-march=armv7-a", "-mfpu=vfpv3-d16", "-mhard-float", "-D_NDK_MATH_NO_SOFTFP=1"],
+                    "ldflags": ["-mthumb", "-march=armv7-a", "-Wl,--fix-cortex-a8", "-Wl,--no-warn-mismatch", "-lm_hard"]
+                }
+            }
+        },
+        "arm64": {
+            "abis": {
+                "arm64-v8a": {}
+            }
+        },
+        "x86": {
+            "abis": {
+                "x86": {}
+            }
+        },
+        "x86_64": {
+            "abis": {
+                "x86_64": {}
+            }
+        },
+        "mips": {
+            "abis": {
+                "mips": {}
+            }
+        },
+        "mips64": {
+            "abis": {
+                "mips64": {}
+            }
+        }
+    }
+}
