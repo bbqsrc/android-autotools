@@ -78,11 +78,11 @@ class StaticLibrary(SharedLibrary):
         return "static library"
 
 class Toolchain:
-    def __init__(self, path, prefix, arch, abi):
+    def __init__(self, path, arch, abi):
         self.arch = arch
         self.abi = abi
         self.path = path
-        self.prefix = prefix
+        self.prefix = tempfile.TemporaryDirectory()
 
     def get_toolchain(self):
         return os.path.join(self.path, 'bin')
@@ -111,7 +111,7 @@ class Toolchain:
         o["STRIP"] = "%s-strip" % host
         o["LIBTOOL"] = "glibtool"
 
-        o["PKG_CONFIG_PATH"] = os.path.join(self.prefix, 'lib', 'pkgconfig')
+        o["PKG_CONFIG_PATH"] = os.path.join(self.prefix.name, 'lib', 'pkgconfig')
 
         cflags = copy.copy(config['cflags'])
         cxxflags = copy.copy(config['cxxflags'])
@@ -137,7 +137,7 @@ class Toolchain:
         cflags.append(flags)
         cxxflags.append(flags)
         cxxflags.append('-I%s' % cpp_includes)
-        ldflags.append('-L%s/lib -L%s/usr/lib' % (self.prefix, sysroot))
+        ldflags.append('-L%s/lib -L%s/usr/lib' % (self.prefix.name, sysroot))
 
         o['CFLAGS'] = " ".join(cflags)
         o['CXXFLAGS'] = " ".join(cxxflags)
@@ -153,7 +153,7 @@ class Toolchain:
 
         p = Popen(['./configure',
                     '--host', host,
-                    '--prefix', self.prefix]
+                    '--prefix', self.prefix.name]
                     + list(args),
                     cwd=src_dir, env=env, stdout=PIPE, stderr=PIPE)
         out, err = p.communicate()
@@ -189,7 +189,7 @@ class Toolchain:
         libdir = os.path.join(os.path.abspath(libdir), self.abi)
         os.makedirs(libdir, exist_ok=True)
 
-        src = os.path.join(self.prefix, 'lib', libname)
+        src = os.path.join(self.prefix.name, 'lib', libname)
         dest = os.path.join(libdir, libname)
 
         shutil.copyfile(src, dest)
@@ -232,7 +232,7 @@ class SickeningNightmare:
         log_tag(arch, "Supported ABIs: %s" % ", ".join(abis))
 
         for abi in abis:
-            self.toolchains[abi] = Toolchain(path, self.prefix_dir.name, arch, abi)
+            self.toolchains[abi] = Toolchain(path, arch, abi)
 
     def __init__(self, ndk_path, lib_dir, archs=list(config['archs'].keys()),
                 platform='android-14', stl='stlport'):
@@ -244,7 +244,6 @@ class SickeningNightmare:
         self.stl = stl
         self.toolchains = OrderedDict()
         self.toolchain_dir = tempfile.TemporaryDirectory()
-        self.prefix_dir = tempfile.TemporaryDirectory()
 
         for arch in archs:
             self.add_toolchain(arch)
