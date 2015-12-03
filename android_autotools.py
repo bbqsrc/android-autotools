@@ -37,12 +37,13 @@ def log_tag(tag, *args):
     print("{} [{}] {}".format(str(datetime.datetime.now()), tag, " ".join(args)))
 
 class SharedLibrary:
-    def __init__(self, toolchain, src_dir, name, lib_path, **kwargs):
+    def __init__(self, toolchain, src_dir, name, lib_path, release=False, **kwargs):
         self.toolchain = toolchain
         self.name = name
         self.path = lib_path
         self.src_dir = src_dir
 
+        toolchain.release = release
         toolchain.cpp = True if kwargs.get('cpp', None) == True else False
 
     def _configure_props(self):
@@ -88,6 +89,7 @@ class Toolchain:
 
         # Toggled by external entities
         self.cpp = False
+        self.release = False
 
     def get_toolchain(self):
         return os.path.join(self.path, 'bin')
@@ -132,6 +134,11 @@ class Toolchain:
         cflags.append(flags)
         ldflags.append('-L%s/lib -L%s/usr/lib -lm' % (self.prefix.name, sysroot))
 
+        if self.release:
+            cflags.append('-O3')
+        else:
+            cflags.append('-g')
+
         if self.cpp:
             cxxflags = copy.copy(config['cxxflags'])
 
@@ -141,6 +148,11 @@ class Toolchain:
 
             if 'cxxflags' in abiflags:
                 cxxflags += abiflags['cxxflags']
+
+            if self.release:
+                cxxflags.append('-O3')
+            else:
+                cxxflags.append('-g')
 
             cxxflags += [
                 flags,
@@ -259,16 +271,16 @@ class SickeningNightmare:
         for arch in archs:
             self.add_toolchain(arch)
 
-    def build(self, src_dir, libname, *args, inject=None, abis=None, **kwargs):
+    def build(self, src_dir, libname, *args, release=False, inject=None, abis=None, **kwargs):
         if abis is None:
             abis = self.toolchains.keys()
 
         for abi in abis:
             toolchain = self.toolchains[abi]
             if libname.endswith('.a'):
-                StaticLibrary(toolchain, src_dir, libname, self.lib_dir, **kwargs).build(*args, inject=inject)
+                StaticLibrary(toolchain, src_dir, libname, self.lib_dir, release=release, **kwargs).build(*args, inject=inject)
             elif libname.endswith('.so'):
-                SharedLibrary(toolchain, src_dir, libname, self.lib_dir, **kwargs).build(*args, inject=inject)
+                SharedLibrary(toolchain, src_dir, libname, self.lib_dir, release=release, **kwargs).build(*args, inject=inject)
 
     def install_stlport(self, abis=None):
         if abis is None:
@@ -280,10 +292,11 @@ class SickeningNightmare:
             toolchain.install_stlport(self.lib_dir)
 
 class BuildSet:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, release=False, **kwargs):
         self.nightmare = SickeningNightmare(*args, **kwargs)
         self.tasks = []
         self.cpp = False
+        self.release = release
 
     def add(self, *args, **kwargs):
         self.tasks.append({
@@ -295,6 +308,6 @@ class BuildSet:
         for task in self.tasks:
             if task['kwargs'].get('cpp', None):
                 self.cpp = True
-            self.nightmare.build(*task['args'], **task['kwargs'])
+            self.nightmare.build(*task['args'], release=self.release, **task['kwargs'])
         if self.cpp:
             self.nightmare.install_stlport()
