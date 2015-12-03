@@ -130,18 +130,25 @@ class Toolchain:
 
         flags = '--sysroot=%s' % sysroot
         cflags.append(flags)
-        ldflags.append('-L%s/lib -L%s/usr/lib' % (self.prefix.name, sysroot))
+        ldflags.append('-L%s/lib -L%s/usr/lib -lm' % (self.prefix.name, sysroot))
 
         if self.cpp:
             cxxflags = copy.copy(config['cxxflags'])
+
+            # Required for cstdint etc
             cpp_includes = glob.glob(os.path.join(self.path, 'include', 'gabi++', 'include'))[0]
             ldflags.append('-lstlport_shared')
 
             if 'cxxflags' in abiflags:
                 cxxflags += abiflags['cxxflags']
 
-            cxxflags.append(flags)
-            cxxflags.append('-I%s' % cpp_includes)
+            cxxflags += [
+                flags,
+                '-I%s' % cpp_includes,
+                '-fexceptions',
+                '-frtti'
+            ]
+
             o['CXXFLAGS'] = " ".join(cxxflags)
 
         o['CFLAGS'] = " ".join(cflags)
