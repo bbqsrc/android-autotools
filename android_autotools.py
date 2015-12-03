@@ -37,11 +37,13 @@ def log_tag(tag, *args):
     print("{} [{}] {}".format(str(datetime.datetime.now()), tag, " ".join(args)))
 
 class SharedLibrary:
-    def __init__(self, toolchain, src_dir, name, lib_path):
+    def __init__(self, toolchain, src_dir, name, lib_path, **kwargs):
         self.toolchain = toolchain
         self.name = name
         self.path = lib_path
         self.src_dir = src_dir
+
+        toolchain.cpp = True if kwargs.get('cpp', None) == True else False
 
     def _configure_props(self):
         return ['--disable-static', '--enable-shared']
@@ -84,6 +86,9 @@ class Toolchain:
         self.path = path
         self.prefix = tempfile.TemporaryDirectory()
 
+        # Toggled by external entities
+        self.cpp = False
+
     def get_toolchain(self):
         return os.path.join(self.path, 'bin')
 
@@ -114,33 +119,32 @@ class Toolchain:
         o["PKG_CONFIG_PATH"] = os.path.join(self.prefix.name, 'lib', 'pkgconfig')
 
         cflags = copy.copy(config['cflags'])
-        cxxflags = copy.copy(config['cxxflags'])
         ldflags = copy.copy(config['ldflags'])
-
-        cpp_includes = glob.glob(os.path.join(self.path, 'include', 'gabi++', 'include'))[0]
-        #gcc_dir = glob.glob(os.path.join(self.path, 'lib', 'gcc', '**', '**'))[0]
-        #c_includes = os.path.join(gcc_dir, 'include')
-        #c_includes_fixed = os.path.join(gcc_dir, 'include-fixed')
-
         abiflags = config['archs'][self.arch]['abis'][self.abi]
 
         if 'cflags' in abiflags:
             cflags += abiflags['cflags']
-
-        if 'cxxflags' in abiflags:
-            cxxflags += abiflags['cxxflags']
 
         if 'ldflags' in abiflags:
             ldflags += abiflags['ldflags']
 
         flags = '--sysroot=%s' % sysroot
         cflags.append(flags)
-        cxxflags.append(flags)
-        cxxflags.append('-I%s' % cpp_includes)
         ldflags.append('-L%s/lib -L%s/usr/lib' % (self.prefix.name, sysroot))
 
+        if self.cpp:
+            cxxflags = copy.copy(config['cxxflags'])
+            cpp_includes = glob.glob(os.path.join(self.path, 'include', 'gabi++', 'include'))[0]
+            ldflags.append('-lstlport_shared')
+
+            if 'cxxflags' in abiflags:
+                cxxflags += abiflags['cxxflags']
+
+            cxxflags.append(flags)
+            cxxflags.append('-I%s' % cpp_includes)
+            o['CXXFLAGS'] = " ".join(cxxflags)
+
         o['CFLAGS'] = " ".join(cflags)
-        o['CXXFLAGS'] = " ".join(cxxflags)
         o['LDFLAGS'] = " ".join(ldflags)
 
         return o
@@ -248,16 +252,16 @@ class SickeningNightmare:
         for arch in archs:
             self.add_toolchain(arch)
 
-    def build(self, src_dir, libname, *args, inject=None, abis=None):
+    def build(self, src_dir, libname, *args, inject=None, abis=None, **kwargs):
         if abis is None:
             abis = self.toolchains.keys()
 
         for abi in abis:
             toolchain = self.toolchains[abi]
             if libname.endswith('.a'):
-                StaticLibrary(toolchain, src_dir, libname, self.lib_dir).build(*args, inject=inject)
+                StaticLibrary(toolchain, src_dir, libname, self.lib_dir, **kwargs).build(*args, inject=inject)
             elif libname.endswith('.so'):
-                SharedLibrary(toolchain, src_dir, libname, self.lib_dir).build(*args, inject=inject)
+                SharedLibrary(toolchain, src_dir, libname, self.lib_dir, **kwargs).build(*args, inject=inject)
 
     def install_stlport(self, abis=None):
         if abis is None:
@@ -280,12 +284,10 @@ class BuildSet:
             "kwargs": kwargs
         })
 
-    def require(self, req):
-        if (req.lower() == 'c++'):
-            self.cpp = True
-
     def run(self):
         for task in self.tasks:
+            if task['kwargs'].get('cpp', None):
+                self.cpp = True
             self.nightmare.build(*task['args'], **task['kwargs'])
         if self.cpp:
             self.nightmare.install_stlport()
