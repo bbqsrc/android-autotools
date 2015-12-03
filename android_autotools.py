@@ -43,13 +43,19 @@ class SharedLibrary:
         self.path = lib_path
         self.src_dir = src_dir
 
+    def _configure_props(self):
+        return ['--disable-static', '--enable-shared']
+
+    def _type_str(self):
+        return "shared library"
+
     def build(self, *args, inject=None):
         t = self.toolchain
         s = self.src_dir
         t.make_distclean(s)
 
         log_tag(t.abi, "%s: ./configure" % self.name)
-        t.configure(s, *args)
+        t.configure(s, *(self._configure_props() + list(args)))
 
         if inject:
             log_tag(t.abi, "%s: injecting header content" % self.name)
@@ -61,8 +67,15 @@ class SharedLibrary:
         log_tag(t.abi, "%s: make install" % self.name)
         t.make_install(s)
 
-        log_tag(t.abi, "%s -> %s/%s (shared library)" % (self.name, self.path, t.abi))
+        log_tag(t.abi, "%s -> %s/%s (%s)" % (self.name, self.path, t.abi, self._type_str()))
         t.install_lib(self.name, self.path)
+
+class StaticLibrary(SharedLibrary):
+    def _configure_props(self):
+        return ['--disable-shared', '--enable-static']
+
+    def _type_str(self):
+        return "static library"
 
 class Toolchain:
     def __init__(self, path, prefix, arch, abi):
@@ -96,6 +109,7 @@ class Toolchain:
         o["LD"] = "%s-ld" % host
         o["RANLIB"] = "%s-ranlib" % host
         o["STRIP"] = "%s-strip" % host
+        o["LIBTOOL"] = "glibtool"
 
         o["PKG_CONFIG_PATH"] = os.path.join(self.prefix, 'lib', 'pkgconfig')
 
@@ -103,9 +117,10 @@ class Toolchain:
         cxxflags = copy.copy(config['cxxflags'])
         ldflags = copy.copy(config['ldflags'])
 
-        cflags.append('--sysroot=%s -I%s/usr/include -I%s/include' % (sysroot, sysroot, self.prefix))
-        cxxflags.append('--sysroot=%s -I%s/usr/include -I%s/include' % (sysroot, sysroot, self.prefix))
-        ldflags.append('-L%s/usr/lib -L%s/lib' % (sysroot, self.prefix))
+        cpp_includes = glob.glob(os.path.join(self.path, 'include', 'gabi++', 'include'))[0]
+        #gcc_dir = glob.glob(os.path.join(self.path, 'lib', 'gcc', '**', '**'))[0]
+        #c_includes = os.path.join(gcc_dir, 'include')
+        #c_includes_fixed = os.path.join(gcc_dir, 'include-fixed')
 
         abiflags = config['archs'][self.arch]['abis'][self.abi]
 
@@ -117,6 +132,12 @@ class Toolchain:
 
         if 'ldflags' in abiflags:
             ldflags += abiflags['ldflags']
+
+        flags = '--sysroot=%s' % sysroot
+        cflags.append(flags)
+        cxxflags.append(flags)
+        cxxflags.append('-I%s' % cpp_includes)
+        ldflags.append('-L%s/lib -L%s/usr/lib' % (self.prefix, sysroot))
 
         o['CFLAGS'] = " ".join(cflags)
         o['CXXFLAGS'] = " ".join(cxxflags)
@@ -132,10 +153,8 @@ class Toolchain:
 
         p = Popen(['./configure',
                     '--host', host,
-                    '--prefix', self.prefix,
-                    '--disable-static',
-                    '--enable-shared',
-                    '--with-sysroot=%s' % sysroot] + list(args),
+                    '--prefix', self.prefix]
+                    + list(args),
                     cwd=src_dir, env=env, stdout=PIPE, stderr=PIPE)
         out, err = p.communicate()
 
@@ -153,7 +172,6 @@ class Toolchain:
             raise IOError(err.decode())
 
     def make_install(self, src_dir):
-
         p = Popen(['make', 'install'], cwd=src_dir, env=self.get_env(),
              stdout=PIPE, stderr=PIPE)
         out, err = p.communicate()
@@ -172,6 +190,16 @@ class Toolchain:
         os.makedirs(libdir, exist_ok=True)
 
         src = os.path.join(self.prefix, 'lib', libname)
+        dest = os.path.join(libdir, libname)
+
+        shutil.copyfile(src, dest)
+
+    def install_stlport(self, libdir):
+        libdir = os.path.join(os.path.abspath(libdir), self.abi)
+        os.makedirs(libdir, exist_ok=True)
+
+        libname = 'libstlport_shared.so'
+        src = os.path.join(self.path, self.get_host(), 'lib', libname)
         dest = os.path.join(libdir, libname)
 
         shutil.copyfile(src, dest)
@@ -206,12 +234,13 @@ class SickeningNightmare:
         for abi in abis:
             self.toolchains[abi] = Toolchain(path, self.prefix_dir.name, arch, abi)
 
-    def __init__(self, ndk_path, archs=list(config['archs'].keys()),
+    def __init__(self, ndk_path, lib_dir, archs=list(config['archs'].keys()),
                 platform='android-14', stl='stlport'):
         if not os.path.isdir(ndk_path):
             raise Exception("ndk_path must be to the NDK directory")
 
         self.ndk_path = ndk_path
+        self.lib_dir = lib_dir
         self.stl = stl
         self.toolchains = OrderedDict()
         self.toolchain_dir = tempfile.TemporaryDirectory()
@@ -220,13 +249,44 @@ class SickeningNightmare:
         for arch in archs:
             self.add_toolchain(arch)
 
-    def build(self, src_dir, libname, libdir, *args, inject=None, abis=None):
+    def build(self, src_dir, libname, *args, inject=None, abis=None):
         if abis is None:
             abis = self.toolchains.keys()
 
-        log_tag("***", "Beginning builds!")
-
-
         for abi in abis:
             toolchain = self.toolchains[abi]
-            SharedLibrary(toolchain, src_dir, libname, libdir).build(*args, inject=inject)
+            if libname.endswith('.a'):
+                StaticLibrary(toolchain, src_dir, libname, self.lib_dir).build(*args, inject=inject)
+            elif libname.endswith('.so'):
+                SharedLibrary(toolchain, src_dir, libname, self.lib_dir).build(*args, inject=inject)
+
+    def install_stlport(self, abis=None):
+        if abis is None:
+            abis = self.toolchains.keys()
+        for abi in abis:
+            toolchain = self.toolchains[abi]
+
+            log_tag(abi, "%s -> %s/%s (%s)" % ('stlport_shared.so', self.lib_dir, abi, "shared library"))
+            toolchain.install_stlport(self.lib_dir)
+
+class BuildSet:
+    def __init__(self, *args, **kwargs):
+        self.nightmare = SickeningNightmare(*args, **kwargs)
+        self.tasks = []
+        self.cpp = False
+
+    def add(self, *args, **kwargs):
+        self.tasks.append({
+            "args": args,
+            "kwargs": kwargs
+        })
+
+    def require(self, req):
+        if (req.lower() == 'c++'):
+            self.cpp = True
+
+    def run(self):
+        for task in self.tasks:
+            self.nightmare.build(*task['args'], **task['kwargs'])
+        if self.cpp:
+            self.nightmare.install_stlport()
