@@ -1,0 +1,58 @@
+{
+  "archs": ["x86", "x86_64", "arm", "arm64"],
+  "targets": [
+    {
+      "path": "xz",
+      "output": "liblzma.so",
+      "configure": [
+        "--disable-xz",
+        "--disable-xzdec",
+        "--disable-lzmadec",
+        "--disable-lzmainfo",
+        "--disable-lzma-links",
+        "--disable-scripts",
+        "--disable-doc",
+        "--disable-rpath"
+      ]
+    },
+    {
+      "path": "libarchive",
+      "output": "libarchive.so",
+      "configure": [
+        "--disable-silent-rules",
+        "--without-bz2lib",
+        "--without-lzmadec",
+        "--without-iconv",
+        "--without-lzo2",
+        "--without-nettle",
+        "--without-openssl",
+        "--without-xml2",
+        "--without-expat",
+        "--with-lzma",
+        "--with-zlib",
+        "--disable-bsdcpio",
+        "--disable-bsdtar",
+        "ac_cv_func_arc4random_buf=0"
+      ],
+      "inject": "#if defined(__ANDROID__) && !defined(__x86_64__) && !defined(__aarch64__)\n#include <sys/vfs.h>\n#define statvfs statfs\n#define fstatvfs fstatfs\n#endif"
+    },
+    {
+      "path": "hfst-ospell",
+      "output": "libhfstospell.so",
+      "c++": true,
+      "configure": [
+        "--disable-silent-rules",
+        "--disable-hfst-ospell-office",
+        "--disable-xml",
+        "--disable-tool",
+        "--enable-zhfst",
+        "--disable-caching",
+        "--enable-jni-bindings",
+        "--with-extract=tmpdir",
+        "ac_cv_func_malloc_0_nonnull=yes",
+        "ac_cv_func_realloc_0_nonnull=yes"
+      ],
+      "jars": ["hfstospell.jar"]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import os.path
 import os
+import sys
 import glob
 import json
 import copy
@@ -12,6 +13,8 @@ import datetime
 
 from collections import OrderedDict
 from subprocess import PIPE, Popen
+
+ARCHS = ('x86', 'x86_64', 'arm', 'arm64', 'mips', 'mips64')
 
 fpath = os.path.dirname(os.path.realpath(__file__))
 
@@ -34,7 +37,8 @@ def all_abis():
     return tuple(x)
 
 def log_tag(tag, *args):
-    print("{} [{}] {}".format(str(datetime.datetime.now()), tag, " ".join(args)))
+    sys.stdout.write("{} [{}] {}\n".format(str(datetime.datetime.now()), tag, " ".join(args)))
+    sys.stdout.flush()
 
 class SharedLibrary:
     def __init__(self, toolchain, src_dir, name, lib_path, release=False, **kwargs):
@@ -70,7 +74,9 @@ class SharedLibrary:
         log_tag(t.abi, "%s: make install" % self.name)
         t.make_install(s)
 
-        log_tag(t.abi, "%s -> %s/%s (%s)" % (self.name, self.path, t.abi, self._type_str()))
+        log_tag(t.abi, "%s → %s (%s)" % (self.name,
+            os.path.relpath(os.path.join(self.path, t.abi)),
+            self._type_str()))
         t.install_lib(self.name, self.path)
 
 class StaticLibrary(SharedLibrary):
@@ -288,7 +294,9 @@ class SickeningNightmare:
         for abi in abis:
             toolchain = self.toolchains[abi]
 
-            log_tag(abi, "%s -> %s/%s (%s)" % ('stlport_shared.so', self.lib_dir, abi, "shared library"))
+            log_tag(abi, "%s → %s (%s)" % ('stlport_shared.so',
+                os.path.relpath(os.path.join(self.lib_dir, abi)),
+                "shared library"))
             toolchain.install_stlport(self.lib_dir)
 
 class BuildSet:
@@ -311,3 +319,52 @@ class BuildSet:
             self.nightmare.build(*task['args'], release=self.release, **task['kwargs'])
         if self.cpp:
             self.nightmare.install_stlport()
+'''
+if __name__ == "__main__":
+    build = BuildSet(os.environ['NDK_HOME'], '/Users/brendan/git/giella-ime/libs', release=True, archs=['x86'])
+    build.add('/Users/brendan/git/xz', 'liblzma.so',
+        '--disable-xz',
+		'--disable-xzdec',
+		'--disable-lzmadec',
+		'--disable-lzmainfo',
+		'--disable-lzma-links',
+		'--disable-scripts',
+		'--disable-doc',
+		'--disable-rpath')
+    build.add('/Users/brendan/git/libarchive', 'libarchive.so',
+        '--disable-silent-rules',
+		'--without-bz2lib',
+		'--without-lzmadec',
+		'--without-iconv',
+		'--without-lzo2',
+		'--without-nettle',
+		'--without-openssl',
+		'--without-xml2',
+		'--without-expat',
+        '--with-lzma',
+        '--with-zlib',
+		'--disable-bsdcpio',
+		'--disable-bsdtar',
+        'ac_cv_func_arc4random_buf=0',
+        inject="""\
+#if defined(__ANDROID__) && !defined(__x86_64__) && !defined(__aarch64__)
+#include <sys/vfs.h>
+#define statvfs statfs
+#define fstatvfs fstatfs
+#endif
+""")
+    build.add('/Users/brendan/git/hfst-ospell', 'libhfstospell.so',
+		'--disable-silent-rules',
+		'--disable-hfst-ospell-office',
+		'--disable-xml',
+		'--disable-tool',
+		'--enable-zhfst',
+		'--disable-caching',
+        '--enable-jni-bindings',
+		'--with-extract=tmpdir',
+        'ac_cv_func_malloc_0_nonnull=yes',
+        'ac_cv_func_realloc_0_nonnull=yes',
+        cpp=True
+    )
+    build.run()
+'''
