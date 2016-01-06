@@ -16,7 +16,7 @@ import tempfile
 if sys.platform.startswith('linux'):
     from .patchelf import set_soname
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 ARCHS = ('x86', 'x86_64', 'arm', 'arm64', 'mips', 'mips64')
 
