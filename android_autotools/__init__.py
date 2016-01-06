@@ -1,18 +1,22 @@
 import argparse
-import subprocess
-import shutil
-import tempfile
-import os.path
-import os
-import sys
+from collections import OrderedDict
+import copy
+import datetime
 import glob
 import json
-import copy
 import multiprocessing
-import datetime
-
-from collections import OrderedDict
+import os
+import os.path
+import shutil
+import subprocess
 from subprocess import PIPE, Popen
+import sys
+import tempfile
+
+if sys.platform.startswith('linux'):
+    from .patchelf import set_soname
+
+__version__ = "0.1.0"
 
 ARCHS = ('x86', 'x86_64', 'arm', 'arm64', 'mips', 'mips64')
 
@@ -222,12 +226,8 @@ class Toolchain:
         src = os.path.join(self.prefix.name, 'lib', libname)
         dest = os.path.join(libdir, libname)
 
-        p = Popen(['patchelf', '--set-soname', libname, src],
-                env=self.get_env(), stdout=PIPE, stderr=PIPE)
-        out, err = p.communicate()
-
-        if p.returncode != 0:
-            raise IOError(err.decode())
+        if sys.platform.startswith('linux'):
+            set_soname(src, libname)
 
         shutil.copyfile(src, dest)
 

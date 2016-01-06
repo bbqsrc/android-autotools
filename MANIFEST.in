@@ -1,0 +1,2 @@
+include android_autotools/*.json
+include LICENSE
