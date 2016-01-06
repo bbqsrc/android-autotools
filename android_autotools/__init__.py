@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 if sys.platform.startswith('linux'):
-    from .patchelf import set_soname
+    from .patchelf import get_soname, set_soname
 
 __version__ = "0.1.1"
 
@@ -226,8 +226,12 @@ class Toolchain:
         src = os.path.join(self.prefix.name, 'lib', libname)
         dest = os.path.join(libdir, libname)
 
+        # Linux host NDK compilers are renowned for creating versioned SONAMEs
+        # and Android itself cannot handle them. We have to manually patch it
+        # out. Very obnoxious.
         if sys.platform.startswith('linux'):
-            set_soname(src, libname)
+            if get_soname(src) != libname:
+                set_soname(src, libname)
 
         shutil.copyfile(src, dest)
 
