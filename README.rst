@@ -14,7 +14,7 @@ Installation
 **If using Linux:** you will need to install
 `patchelf <https://github.com/NixOS/patchelf>`_ to work around an
 issue where the ``SONAME`` value is set incorrectly using the NDK with a
-Linux host.
+Linux host. Building on other host systems does not require this dependency.
 
 Usage
 -----
