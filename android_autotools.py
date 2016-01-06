@@ -138,7 +138,8 @@ class Toolchain:
 
         flags = '--sysroot=%s' % sysroot
         cflags.append(flags)
-        ldflags.append('-L%s/lib -L%s/usr/lib -lm' % (self.prefix.name, sysroot))
+        libdir = os.path.join(os.path.abspath(self.path), self.abi)
+        ldflags.append('-L%s -L%s/usr/lib -lm' % (libdir, sysroot))
 
         if self.release:
             cflags.append('-O3')
@@ -220,6 +221,13 @@ class Toolchain:
 
         src = os.path.join(self.prefix.name, 'lib', libname)
         dest = os.path.join(libdir, libname)
+
+        p = Popen(['patchelf', '--set-soname', libname, src],
+                env=self.get_env(), stdout=PIPE, stderr=PIPE)
+        out, err = p.communicate()
+
+        if p.returncode != 0:
+            raise IOError(err.decode())
 
         shutil.copyfile(src, dest)
 
