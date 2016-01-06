@@ -15,7 +15,6 @@ setup(
     keywords = "autotools android cross-compilation",
     url = "https://github.com/bbqsrc/android-autotools",
     long_description=desc,
-    ext_modules=[patchelf],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Environment :: Console",
