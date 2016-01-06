@@ -12,7 +12,7 @@ Installation
     pip install android-autotools
 
 **If using Linux:** you will need to install
-```patchelf`` <https://github.com/NixOS/patchelf>`__ to work around an
+`patchelf <https://github.com/NixOS/patchelf>`_ to work around an
 issue where the ``SONAME`` value is set incorrectly using the NDK with a
 Linux host.
 
