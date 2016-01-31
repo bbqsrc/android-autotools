@@ -8,6 +8,9 @@ setup(
     name = "android-autotools",
     version = android_autotools.__version__,
     packages = find_packages(),
+    package_data = {
+        '': ['*.json']
+    },
     author = "Brendan Molloy",
     author_email = "brendan+pypi@bbqsrc.net",
     description = "Handles autotools mayhem for Android development",

@@ -25,7 +25,8 @@ def main():
             default='.', help="output directory for build (default: cwd)")
     g.add_argument('-R', dest='release', action='store_true',
             help="build release (default: debug)")
-    a.add_argument('config', type=argparse.FileType('r'),
+    a.add_argument('-f', dest='config', default='abuild.json',
+            type=argparse.FileType('r'),
             help='build from supplied JSON build file')
 
     args = a.parse_args()

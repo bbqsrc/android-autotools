@@ -13,10 +13,7 @@ from subprocess import PIPE, Popen
 import sys
 import tempfile
 
-if sys.platform.startswith('linux'):
-    from .patchelf import get_soname, set_soname
-
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 ARCHS = ('x86', 'x86_64', 'arm', 'arm64', 'mips', 'mips64')
 
@@ -66,7 +63,7 @@ class SharedLibrary:
         t.make_distclean(s)
 
         log_tag(t.abi, "%s: ./configure" % self.name)
-        t.configure(s, *(self._configure_props() + list(args)))
+        t.configure(s, *(self._configure_props() + list(args)), soname=self.name)
 
         if inject:
             log_tag(t.abi, "%s: injecting header content" % self.name)
@@ -179,11 +176,14 @@ class Toolchain:
 
         return o
 
-    def configure(self, src_dir, *args):
+    def configure(self, src_dir, *args, soname=None):
         toolchain = self.get_toolchain()
         sysroot = self.get_sysroot()
         host = self.get_host()
         env = self.get_env()
+
+        if soname is not None:
+            env['LDFLAGS'] += ' -Wl,-soname,%s' % soname
 
         p = Popen(['./configure',
                     '--host', host,
@@ -250,6 +250,20 @@ class Toolchain:
             f.write('\n' + code.strip() + '\n')
 
 class SickeningNightmare:
+    def __init__(self, ndk_path, lib_dir, archs=list(config['archs'].keys()),
+                platform='android-14', stl='stlport'):
+        if not os.path.isdir(ndk_path):
+            raise Exception("ndk_path must be to the NDK directory")
+
+        self.ndk_path = ndk_path
+        self.lib_dir = lib_dir
+        self.stl = stl
+        self.toolchains = OrderedDict()
+        self.toolchain_dir = tempfile.TemporaryDirectory()
+
+        for arch in archs:
+            self.add_toolchain(arch)
+
     def add_toolchain(self, arch):
         cmd = os.path.join(self.ndk_path,
             'build', 'tools', 'make-standalone-toolchain.sh')
@@ -275,20 +289,6 @@ class SickeningNightmare:
         for abi in abis:
             self.toolchains[abi] = Toolchain(path, arch, abi)
 
-    def __init__(self, ndk_path, lib_dir, archs=list(config['archs'].keys()),
-                platform='android-14', stl='stlport'):
-        if not os.path.isdir(ndk_path):
-            raise Exception("ndk_path must be to the NDK directory")
-
-        self.ndk_path = ndk_path
-        self.lib_dir = lib_dir
-        self.stl = stl
-        self.toolchains = OrderedDict()
-        self.toolchain_dir = tempfile.TemporaryDirectory()
-
-        for arch in archs:
-            self.add_toolchain(arch)
-
     def build(self, src_dir, libname, *args, release=False, inject=None, abis=None, **kwargs):
         if abis is None:
             abis = self.toolchains.keys()
@@ -296,9 +296,11 @@ class SickeningNightmare:
         for abi in abis:
             toolchain = self.toolchains[abi]
             if libname.endswith('.a'):
-                StaticLibrary(toolchain, src_dir, libname, self.lib_dir, release=release, **kwargs).build(*args, inject=inject)
+                StaticLibrary(toolchain, src_dir, libname, self.lib_dir,
+                    release=release, **kwargs).build(*args, inject=inject)
             elif libname.endswith('.so'):
-                SharedLibrary(toolchain, src_dir, libname, self.lib_dir, release=release, **kwargs).build(*args, inject=inject)
+                SharedLibrary(toolchain, src_dir, libname, self.lib_dir,
+                    release=release, **kwargs).build(*args, inject=inject)
 
     def install_stlport(self, abis=None):
         if abis is None:
@@ -331,52 +333,3 @@ class BuildSet:
             self.nightmare.build(*task['args'], release=self.release, **task['kwargs'])
         if self.cpp:
             self.nightmare.install_stlport()
-'''
-if __name__ == "__main__":
-    build = BuildSet(os.environ['NDK_HOME'], '/Users/brendan/git/giella-ime/libs', release=True, archs=['x86'])
-    build.add('/Users/brendan/git/xz', 'liblzma.so',
-        '--disable-xz',
-		'--disable-xzdec',
-		'--disable-lzmadec',
-		'--disable-lzmainfo',
-		'--disable-lzma-links',
-		'--disable-scripts',
-		'--disable-doc',
-		'--disable-rpath')
-    build.add('/Users/brendan/git/libarchive', 'libarchive.so',
-        '--disable-silent-rules',
-		'--without-bz2lib',
-		'--without-lzmadec',
-		'--without-iconv',
-		'--without-lzo2',
-		'--without-nettle',
-		'--without-openssl',
-		'--without-xml2',
-		'--without-expat',
-        '--with-lzma',
-        '--with-zlib',
-		'--disable-bsdcpio',
-		'--disable-bsdtar',
-        'ac_cv_func_arc4random_buf=0',
-        inject="""\
-#if defined(__ANDROID__) && !defined(__x86_64__) && !defined(__aarch64__)
-#include <sys/vfs.h>
-#define statvfs statfs
-#define fstatvfs fstatfs
-#endif
-""")
-    build.add('/Users/brendan/git/hfst-ospell', 'libhfstospell.so',
-		'--disable-silent-rules',
-		'--disable-hfst-ospell-office',
-		'--disable-xml',
-		'--disable-tool',
-		'--enable-zhfst',
-		'--disable-caching',
-        '--enable-jni-bindings',
-		'--with-extract=tmpdir',
-        'ac_cv_func_malloc_0_nonnull=yes',
-        'ac_cv_func_realloc_0_nonnull=yes',
-        cpp=True
-    )
-    build.run()
-'''

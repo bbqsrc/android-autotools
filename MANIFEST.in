@@ -1,2 +1,3 @@
 include android_autotools/*.json
+include CHANGELOG.md
 include LICENSE
