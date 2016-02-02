@@ -5,6 +5,8 @@ import os
 import sys
 import json
 import os.path
+import subprocess
+
 import android_autotools
 
 def main():
@@ -45,7 +47,8 @@ def main():
                 os.environ['NDK_HOME'],
                 output_dir,
                 release=args.release,
-                archs=args.arch or conf.get('archs', android_autotools.ARCHS))
+                archs=args.arch or conf.get('archs', android_autotools.ARCHS),
+                verbose=args.verbose)
 
     for t in conf['targets']:
         build.add(os.path.join(conf_dir, t['path']),
@@ -55,7 +58,8 @@ def main():
             cpp=t.get('c++', False))
 
     try:
-        build.run()
+        res = build.run()
+        return 0 if res is not False else 1
     except Exception as e:
         if args.verbose:
             raise e

@@ -1,8 +1,9 @@
 import argparse
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 import copy
 import datetime
 import glob
+import io
 import json
 import multiprocessing
 import os
@@ -13,7 +14,7 @@ from subprocess import PIPE, Popen
 import sys
 import tempfile
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 ARCHS = ('x86', 'x86_64', 'arm', 'arm64', 'mips', 'mips64')
 
@@ -41,13 +42,39 @@ def log_tag(tag, *args):
     sys.stdout.write("{} [{}] {}\n".format(str(datetime.datetime.now()), tag, " ".join(args)))
     sys.stdout.flush()
 
+ObjdumpData = namedtuple("ObjdumpData", ["needed", "soname"])
+
+def parse_objdump_x(path, objdump='objdump', **kwargs):
+    data = io.BytesIO(subprocess.check_output([objdump, '-x', path], **kwargs))
+    needed = []
+    soname = None
+
+    # Skip to dynamic section
+    for line in data:
+        if line.startswith(b"Dynamic Section"):
+            break
+
+    # Get NEEDED and SONAME
+    for line in data:
+        if len(line.strip()) == 0:
+            break
+        op, val = line.strip().split()
+
+        if op == b"NEEDED":
+            needed.append(val.decode())
+        elif op == b"SONAME":
+            soname = val.decode()
+
+    return ObjdumpData(needed, soname)
+
 class SharedLibrary:
-    def __init__(self, toolchain, src_dir, name, lib_path, release=False, **kwargs):
+    def __init__(self, toolchain, src_dir, name, lib_path, release=False, verbose=False, **kwargs):
         self.toolchain = toolchain
         self.name = name
         self.path = lib_path
         self.src_dir = src_dir
 
+        toolchain.verbose = verbose
         toolchain.release = release
         toolchain.cpp = True if kwargs.get('cpp', None) == True else False
 
@@ -56,6 +83,21 @@ class SharedLibrary:
 
     def _type_str(self):
         return "shared library"
+
+    def verify(self):
+        env = self.toolchain.get_env()
+        objdump = env['OBJDUMP']
+        lib_path = os.path.join(self.toolchain.prefix.name, 'lib', self.name)
+        errs = []
+
+        dump = parse_objdump_x(lib_path, objdump=objdump, env=env)
+        if dump.soname != self.name:
+            errs.append("Found versioned SONAME field; breaks loading via JNI: '%s'" % dump.soname)
+        for needed in dump.needed:
+            if not needed.endswith('.so'):
+                errs.append("Found versioned NEEDED fields; will not load via JNI: '%s'" % needed)
+
+        return errs
 
     def build(self, *args, inject=None):
         t = self.toolchain
@@ -74,6 +116,12 @@ class SharedLibrary:
 
         log_tag(t.abi, "%s: make install" % self.name)
         t.make_install(s)
+
+        errors = self.verify()
+        if len(errors) > 0:
+            for error in errors:
+                log_tag(t.abi, "ERROR: %s" % error)
+            return False
 
         log_tag(t.abi, "%s → %s (%s)" % (self.name,
             os.path.relpath(os.path.join(self.path, t.abi)),
@@ -97,6 +145,7 @@ class Toolchain:
         # Toggled by external entities
         self.cpp = False
         self.release = False
+        self.verbose = False
 
     def get_toolchain(self):
         return os.path.join(self.path, 'bin')
@@ -123,7 +172,7 @@ class Toolchain:
         o["LD"] = "%s-ld" % host
         o["RANLIB"] = "%s-ranlib" % host
         o["STRIP"] = "%s-strip" % host
-        o["LIBTOOL"] = "glibtool"
+        o["OBJDUMP"] = "%s-objdump" % host
 
         o["PKG_CONFIG_PATH"] = os.path.join(self.prefix.name, 'lib', 'pkgconfig')
 
@@ -137,10 +186,13 @@ class Toolchain:
         if 'ldflags' in abiflags:
             ldflags += abiflags['ldflags']
 
-        flags = '--sysroot=%s' % sysroot
+        prefix_include = os.path.join(self.prefix.name, 'include')
+        prefix_lib = os.path.join(self.prefix.name, 'lib')
+
+        flags = '-I%s --sysroot=%s' % (prefix_include, sysroot)
+
         cflags.append(flags)
-        libdir = os.path.join(os.path.abspath(self.path), self.abi)
-        ldflags.append('-L%s -L%s/usr/lib -lm' % (libdir, sysroot))
+        ldflags.append('-L%s -L%s/usr/lib -lm' % (prefix_lib, sysroot))
 
         if self.release:
             cflags.append('-O3')
@@ -171,6 +223,7 @@ class Toolchain:
 
             o['CXXFLAGS'] = " ".join(cxxflags)
 
+        o['CPPFLAGS'] = flags
         o['CFLAGS'] = " ".join(cflags)
         o['LDFLAGS'] = " ".join(ldflags)
 
@@ -183,13 +236,18 @@ class Toolchain:
         env = self.get_env()
 
         if soname is not None:
-            env['LDFLAGS'] += ' -Wl,-soname,%s' % soname
+            env['LDFLAGS'] += " -Wl,-soname,%s" % soname
+
+        if self.verbose:
+            pipe = None
+        else:
+            pipe = PIPE
 
         p = Popen(['./configure',
                     '--host', host,
                     '--prefix', self.prefix.name]
                     + list(args),
-                    cwd=src_dir, env=env, stdout=PIPE, stderr=PIPE)
+                    cwd=src_dir, env=env, stdout=pipe, stderr=pipe)
         out, err = p.communicate()
 
         if p.returncode != 0:
@@ -198,16 +256,26 @@ class Toolchain:
     def make(self, src_dir):
         j = str(multiprocessing.cpu_count())
 
+        if self.verbose:
+            pipe = None
+        else:
+            pipe = PIPE
+
         p = Popen(['make', '-j', j],
-            cwd=src_dir, env=self.get_env(), stdout=PIPE, stderr=PIPE)
+            cwd=src_dir, env=self.get_env(), stdout=pipe, stderr=pipe)
         out, err = p.communicate()
 
         if p.returncode != 0:
             raise IOError(err.decode())
 
     def make_install(self, src_dir):
+        if self.verbose:
+            pipe = None
+        else:
+            pipe = PIPE
+
         p = Popen(['make', 'install'], cwd=src_dir, env=self.get_env(),
-             stdout=PIPE, stderr=PIPE)
+             stdout=pipe, stderr=pipe)
         out, err = p.communicate()
 
         if p.returncode != 0:
@@ -225,13 +293,6 @@ class Toolchain:
 
         src = os.path.join(self.prefix.name, 'lib', libname)
         dest = os.path.join(libdir, libname)
-
-        # Linux host NDK compilers are renowned for creating versioned SONAMEs
-        # and Android itself cannot handle them. We have to manually patch it
-        # out. Very obnoxious.
-        if sys.platform.startswith('linux'):
-            if get_soname(src) != libname:
-                set_soname(src, libname)
 
         shutil.copyfile(src, dest)
 
@@ -289,18 +350,19 @@ class SickeningNightmare:
         for abi in abis:
             self.toolchains[abi] = Toolchain(path, arch, abi)
 
-    def build(self, src_dir, libname, *args, release=False, inject=None, abis=None, **kwargs):
+    def build(self, src_dir, libname, *args, release=False, verbose=False,
+            inject=None, abis=None, **kwargs):
         if abis is None:
             abis = self.toolchains.keys()
 
         for abi in abis:
             toolchain = self.toolchains[abi]
             if libname.endswith('.a'):
-                StaticLibrary(toolchain, src_dir, libname, self.lib_dir,
-                    release=release, **kwargs).build(*args, inject=inject)
+                return StaticLibrary(toolchain, src_dir, libname, self.lib_dir,
+                    release=release, verbose=verbose, **kwargs).build(*args, inject=inject)
             elif libname.endswith('.so'):
-                SharedLibrary(toolchain, src_dir, libname, self.lib_dir,
-                    release=release, **kwargs).build(*args, inject=inject)
+                return SharedLibrary(toolchain, src_dir, libname, self.lib_dir,
+                    release=release, verbose=verbose, **kwargs).build(*args, inject=inject)
 
     def install_stlport(self, abis=None):
         if abis is None:
@@ -314,10 +376,11 @@ class SickeningNightmare:
             toolchain.install_stlport(self.lib_dir)
 
 class BuildSet:
-    def __init__(self, *args, release=False, **kwargs):
+    def __init__(self, *args, release=False, verbose=False, **kwargs):
         self.nightmare = SickeningNightmare(*args, **kwargs)
         self.tasks = []
         self.cpp = False
+        self.verbose = verbose
         self.release = release
 
     def add(self, *args, **kwargs):
@@ -330,6 +393,11 @@ class BuildSet:
         for task in self.tasks:
             if task['kwargs'].get('cpp', None):
                 self.cpp = True
-            self.nightmare.build(*task['args'], release=self.release, **task['kwargs'])
+            res = self.nightmare.build(*task['args'], release=self.release,
+                    verbose=self.verbose, **task['kwargs'])
+            if res is False:
+                sys.stdout.write('Build aborted due to errors.\n')
+                sys.stdout.flush()
+                return False
         if self.cpp:
             self.nightmare.install_stlport()
