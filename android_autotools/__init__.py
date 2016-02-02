@@ -8,6 +8,7 @@ import json
 import multiprocessing
 import os
 import os.path
+import re
 import shutil
 import subprocess
 from subprocess import PIPE, Popen
@@ -105,7 +106,7 @@ class SharedLibrary:
         t.make_distclean(s)
 
         log_tag(t.abi, "%s: ./configure" % self.name)
-        t.configure(s, *(self._configure_props() + list(args)), soname=self.name)
+        t.configure(s, *(self._configure_props() + list(args)))
 
         if inject:
             log_tag(t.abi, "%s: injecting header content" % self.name)
@@ -229,14 +230,37 @@ class Toolchain:
 
         return o
 
-    def configure(self, src_dir, *args, soname=None):
+    def hack_libtool(self, src_dir):
+        # Ubuntu/Debian lacks a modern libtool, so we have to do this ourselves.
+        libtool_path = os.path.join(src_dir, 'libtool')
+        if not os.path.isfile(libtool_path):
+            return
+
+        with open(libtool_path) as f:
+            data = f.read()
+
+        repls = {
+            "version_type": "none",
+            "need_lib_prefix": "no",
+            "need_version": "no",
+            "library_names_spec": "'$libname$release$shared_ext'",
+            "soname_spec": "'$libname$release$shared_ext'",
+            "finish_cmds": "",
+            "shlibpath_var": "LD_LIBRARY_PATH",
+            "shlibpath_overrides_runpath": "yes"
+        }
+
+        for k, v in repls.items():
+            re.sub("^%s=.*" % k, "%s=%s" % (k, v), data)
+
+        with open(libtool_path, 'w') as f:
+            f.write(data)
+
+    def configure(self, src_dir, *args):
         toolchain = self.get_toolchain()
         sysroot = self.get_sysroot()
         host = self.get_host()
         env = self.get_env()
-
-        if soname is not None:
-            env['LDFLAGS'] += " -Wl,-soname,%s" % soname
 
         if self.verbose:
             pipe = None
@@ -252,6 +276,8 @@ class Toolchain:
 
         if p.returncode != 0:
             raise IOError(err.decode())
+
+        self.hack_libtool(src_dir)
 
     def make(self, src_dir):
         j = str(multiprocessing.cpu_count())
