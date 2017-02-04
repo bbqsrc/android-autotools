@@ -92,7 +92,7 @@ class SharedLibrary:
         errs = []
 
         dump = parse_objdump_x(lib_path, objdump=objdump, env=env)
-        if dump.soname != self.name:
+        if self._type_str() == "shared library" and dump.soname != self.name:
             errs.append("Found versioned SONAME field; breaks loading via JNI: '%s'" % dump.soname)
         for needed in dump.needed:
             if not needed.endswith('.so'):
@@ -128,6 +128,7 @@ class SharedLibrary:
             os.path.relpath(os.path.join(self.path, t.abi)),
             self._type_str()))
         t.install_lib(self.name, self.path)
+        return True
 
 class StaticLibrary(SharedLibrary):
     def _configure_props(self):
@@ -384,11 +385,14 @@ class SickeningNightmare:
         for abi in abis:
             toolchain = self.toolchains[abi]
             if libname.endswith('.a'):
-                return StaticLibrary(toolchain, src_dir, libname, self.lib_dir,
+                res = StaticLibrary(toolchain, src_dir, libname, self.lib_dir,
                     release=release, verbose=verbose, **kwargs).build(*args, inject=inject)
             elif libname.endswith('.so'):
-                return SharedLibrary(toolchain, src_dir, libname, self.lib_dir,
+                res = SharedLibrary(toolchain, src_dir, libname, self.lib_dir,
                     release=release, verbose=verbose, **kwargs).build(*args, inject=inject)
+            if not res:
+                break
+        return res
 
     def install_stlport(self, abis=None):
         if abis is None:
@@ -421,7 +425,7 @@ class BuildSet:
                 self.cpp = True
             res = self.nightmare.build(*task['args'], release=self.release,
                     verbose=self.verbose, **task['kwargs'])
-            if res is False:
+            if not res:
                 sys.stdout.write('Build aborted due to errors.\n')
                 sys.stdout.flush()
                 return False
